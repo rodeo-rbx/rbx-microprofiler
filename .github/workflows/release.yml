@@ -11,7 +11,7 @@ permissions:
 jobs:
   release:
     name: Build & Release
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +37,7 @@ jobs:
           cd dist/macos-aarch64 && tar -czf ../../rbx-microprofiler-v${VERSION}-macos-aarch64.tar.gz rbx-microprofiler && cd ../..
           cd dist/macos-x86_64 && tar -czf ../../rbx-microprofiler-v${VERSION}-macos-x86_64.tar.gz rbx-microprofiler && cd ../..
           cd dist/linux-x86_64 && tar -czf ../../rbx-microprofiler-v${VERSION}-linux-x86_64.tar.gz rbx-microprofiler && cd ../..
-          cd dist/windows-x86_64 && 7z a ../../rbx-microprofiler-v${VERSION}-windows-x86_64.zip rbx-microprofiler.exe && cd ../..
+          cd dist/windows-x86_64 && zip ../../rbx-microprofiler-v${VERSION}-windows-x86_64.zip rbx-microprofiler.exe && cd ../..
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
