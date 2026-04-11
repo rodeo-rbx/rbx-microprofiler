@@ -18,22 +18,22 @@ jobs:
         include:
           - name: macos-aarch64
             os: macos-latest
-            target: ""
+            cmd: bun build --compile src/index.ts --outfile rbx-microprofiler
             outfile: rbx-microprofiler
             archive: tar
           - name: macos-x86_64
-            os: macos-13
-            target: ""
+            os: macos-latest
+            cmd: bun build --compile --target=bun-darwin-x64 src/index.ts --outfile rbx-microprofiler
             outfile: rbx-microprofiler
             archive: tar
           - name: linux-x86_64
             os: ubuntu-latest
-            target: bun-linux-x64
+            cmd: bun build --compile src/index.ts --outfile rbx-microprofiler
             outfile: rbx-microprofiler
             archive: tar
           - name: windows-x86_64
             os: windows-latest
-            target: bun-windows-x64
+            cmd: bun build --compile src/index.ts --outfile rbx-microprofiler.exe
             outfile: rbx-microprofiler.exe
             archive: zip
 
@@ -49,13 +49,8 @@ jobs:
 
       - run: bun install
 
-      - name: Build (native)
-        if: matrix.target == ''
-        run: bun build --compile src/index.ts --outfile ${{ matrix.outfile }}
-
-      - name: Build (cross)
-        if: matrix.target != ''
-        run: bun build --compile --target=${{ matrix.target }} src/index.ts --outfile ${{ matrix.outfile }}
+      - name: Build
+        run: ${{ matrix.cmd }}
 
       - name: Package (tar)
         if: matrix.archive == 'tar'
