@@ -1,0 +1,10 @@
+[tools]
+bun = "latest"
+
+[tasks.build]
+description = "Build standalone binary"
+run = "bun build --compile src/index.ts --outfile rbx-microprofiler"
+
+[tasks.dev]
+description = "Run in development mode"
+run = "bun run src/index.ts"

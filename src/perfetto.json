@@ -1,0 +1,193 @@
+{
+  "nested": {
+    "perfetto": {
+      "nested": {
+        "protos": {
+          "nested": {
+            "Trace": {
+              "edition": "proto2",
+              "fields": {
+                "packet": {
+                  "rule": "repeated",
+                  "type": "TracePacket",
+                  "id": 1
+                }
+              }
+            },
+            "TracePacket": {
+              "edition": "proto2",
+              "fields": {
+                "timestamp": {
+                  "type": "uint64",
+                  "id": 8
+                },
+                "trustedPacketSequenceId": {
+                  "type": "uint32",
+                  "id": 10
+                },
+                "sequenceFlags": {
+                  "type": "uint32",
+                  "id": 13
+                },
+                "trackDescriptor": {
+                  "type": "TrackDescriptor",
+                  "id": 60
+                },
+                "trackEvent": {
+                  "type": "TrackEvent",
+                  "id": 11
+                },
+                "internedData": {
+                  "type": "InternedData",
+                  "id": 12
+                }
+              }
+            },
+            "TrackDescriptor": {
+              "edition": "proto2",
+              "fields": {
+                "uuid": {
+                  "type": "uint64",
+                  "id": 1
+                },
+                "parentUuid": {
+                  "type": "uint64",
+                  "id": 5
+                },
+                "process": {
+                  "type": "ProcessDescriptor",
+                  "id": 3
+                },
+                "thread": {
+                  "type": "ThreadDescriptor",
+                  "id": 4
+                }
+              }
+            },
+            "ProcessDescriptor": {
+              "edition": "proto2",
+              "fields": {
+                "pid": {
+                  "type": "int32",
+                  "id": 1
+                },
+                "processName": {
+                  "type": "string",
+                  "id": 6
+                }
+              }
+            },
+            "ThreadDescriptor": {
+              "edition": "proto2",
+              "fields": {
+                "pid": {
+                  "type": "int32",
+                  "id": 1
+                },
+                "tid": {
+                  "type": "int32",
+                  "id": 2
+                },
+                "threadName": {
+                  "type": "string",
+                  "id": 5
+                }
+              }
+            },
+            "TrackEvent": {
+              "edition": "proto2",
+              "fields": {
+                "trackUuid": {
+                  "type": "uint64",
+                  "id": 11
+                },
+                "nameIid": {
+                  "type": "uint64",
+                  "id": 10
+                },
+                "categoryIids": {
+                  "rule": "repeated",
+                  "type": "uint64",
+                  "id": 3
+                },
+                "debugAnnotations": {
+                  "rule": "repeated",
+                  "type": "DebugAnnotation",
+                  "id": 4
+                },
+                "type": {
+                  "type": "Type",
+                  "id": 9
+                }
+              },
+              "nested": {
+                "Type": {
+                  "values": {
+                    "TYPE_UNSPECIFIED": 0,
+                    "TYPE_SLICE_BEGIN": 1,
+                    "TYPE_SLICE_END": 2,
+                    "TYPE_INSTANT": 3
+                  }
+                }
+              }
+            },
+            "DebugAnnotation": {
+              "edition": "proto2",
+              "fields": {
+                "name": {
+                  "type": "string",
+                  "id": 10
+                },
+                "intValue": {
+                  "type": "int64",
+                  "id": 2
+                }
+              }
+            },
+            "InternedData": {
+              "edition": "proto2",
+              "fields": {
+                "eventNames": {
+                  "rule": "repeated",
+                  "type": "EventName",
+                  "id": 2
+                },
+                "eventCategories": {
+                  "rule": "repeated",
+                  "type": "EventCategory",
+                  "id": 3
+                }
+              }
+            },
+            "EventName": {
+              "edition": "proto2",
+              "fields": {
+                "iid": {
+                  "type": "uint64",
+                  "id": 1
+                },
+                "name": {
+                  "type": "string",
+                  "id": 2
+                }
+              }
+            },
+            "EventCategory": {
+              "edition": "proto2",
+              "fields": {
+                "iid": {
+                  "type": "uint64",
+                  "id": 1
+                },
+                "name": {
+                  "type": "string",
+                  "id": 2
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
