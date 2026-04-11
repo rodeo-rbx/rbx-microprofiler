@@ -31,6 +31,11 @@ jobs:
           bun build --compile --target=bun-linux-x64 src/index.ts --outfile dist/linux-x86_64/rbx-microprofiler
           bun build --compile --target=bun-windows-x64 src/index.ts --outfile dist/windows-x86_64/rbx-microprofiler.exe
 
+      - name: Ad-hoc sign macOS binaries
+        run: |
+          codesign -s - dist/macos-aarch64/rbx-microprofiler
+          codesign -s - dist/macos-x86_64/rbx-microprofiler
+
       - name: Package
         run: |
           VERSION=${{ steps.version.outputs.version }}
