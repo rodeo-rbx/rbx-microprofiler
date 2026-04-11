@@ -52,6 +52,10 @@ jobs:
       - name: Build
         run: ${{ matrix.cmd }}
 
+      - name: Ad-hoc sign macOS binary
+        if: runner.os == 'macOS'
+        run: codesign -s - -f ${{ matrix.outfile }}
+
       - name: Package (tar)
         if: matrix.archive == 'tar'
         run: tar -czf rbx-microprofiler-v${{ steps.version.outputs.version }}-${{ matrix.name }}.tar.gz ${{ matrix.outfile }}
