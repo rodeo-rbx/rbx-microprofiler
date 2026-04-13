@@ -35,19 +35,21 @@ export function readHtml(path: string): Uint8Array {
   const html = readFileSync(path, "utf-8");
   const payload = extractRawFromHtml(html);
 
-  // The extracted data has "    R0FL" prefix (from ExtractRawData's prefix arg)
-  // We need to strip that and reconstruct the proper R0FL header
-  // Actually, looking at the code: prefix="    R0FL" means the decompressed data
-  // starts with those bytes. The raw payload after the prefix IS the dump data.
-  // Let's find where the actual data starts
+  // Check if the decompressed data already contains R0FL marker
   const r0flIdx = findR0FL(payload);
-  if (r0flIdx === -1) {
-    throw new Error(`Could not find R0FL marker in extracted HTML data from ${path}`);
+  if (r0flIdx !== -1) {
+    // Return from the 4 bytes before R0FL (the zero bytes)
+    const start = Math.max(0, r0flIdx - 4);
+    return payload.slice(start);
   }
 
-  // Return from the 4 bytes before R0FL (the zero bytes)
-  const start = Math.max(0, r0flIdx - 4);
-  return payload.slice(start);
+  // Roblox HTML format: the decompressed payload is raw dump data without
+  // an R0FL header — the "R0FL" was only the HTML comment prefix. Prepend
+  // the standard 8-byte header (\0\0\0\0R0FL).
+  const result = new Uint8Array(R0FL_MAGIC.length + payload.length);
+  result.set(R0FL_MAGIC, 0);
+  result.set(payload, R0FL_MAGIC.length);
+  return result;
 }
 
 function findR0FL(data: Uint8Array): number {
