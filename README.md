@@ -1,6 +1,6 @@
 # rbx-microprofiler
 
-CLI for Roblox MicroProfiler dump analysis. Parse `.raw` and `.html` dumps, generate flamegraphs, compare performance across builds, and convert between formats.
+CLI for Roblox MicroProfiler dump analysis. Parse `.raw` and `.html` dumps, generate flamegraphs, and compare performance across builds.
 
 ## Install
 
@@ -21,7 +21,7 @@ rokit add revvy02/rbx-microprofiler
 
 ### convert
 
-Convert between MicroProfiler formats. Supports `.raw`, `.html`, `.json` (Chrome Trace), and `.perfetto-trace`.
+Convert between the two MicroProfiler dump formats: `.raw` (binary) and `.html` (self-contained viewer).
 
 ```sh
 # raw -> html (adds the interactive viewer)
@@ -81,8 +81,6 @@ rbx-microprofiler diff-flamegraph \
 |--------|-----------|-------------|
 | Raw | `.raw` | Binary R0FL format (4 zero bytes + `R0FL` magic + payload) |
 | HTML | `.html` | Self-contained viewer with embedded compressed data |
-| Chrome Trace | `.json` | Standard trace event format, viewable in `chrome://tracing` |
-| Perfetto | `.perfetto-trace` | Native Perfetto protobuf, viewable at [ui.perfetto.dev](https://ui.perfetto.dev) |
 
 ### diff
 
