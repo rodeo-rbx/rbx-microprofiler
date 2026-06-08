@@ -13,7 +13,14 @@ import { basename, join } from "node:path";
 function openFile(path: string): void {
   if (process.platform === "darwin") execSync(`open "${path}"`);
   else if (process.platform === "linux") execSync(`xdg-open "${path}"`);
-  else execSync(`start "${path}"`, { shell: "cmd.exe" });
+  else {
+    // Windows: cmd's `start` treats the first quoted argument as the window
+    // title, so the path must be the SECOND quoted arg (with an empty title
+    // first) or it never opens. Use backslashes — `start` can misparse forward
+    // slashes as switches.
+    const winPath = path.replace(/\//g, "\\");
+    execSync(`start "" "${winPath}"`, { shell: "cmd.exe" });
+  }
 }
 
 function collectFiles(paths: string[]): string[] {
