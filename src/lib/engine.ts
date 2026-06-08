@@ -114,6 +114,51 @@ function runViewerInit(): void {
   globalThis.PreprocessMinimal();
 }
 
+/**
+ * Roblox's WASM profiler exporter writes profiler labels into JS array literals
+ * (e.g. `S.tl0 = ["label","label",...]`) and calls back into JS to `eval` them —
+ * but it does NOT escape double-quotes inside the labels. A label can legitimately
+ * contain quotes: most notably an inlined-source run, where the script's
+ * ModuleScript name is its own source, e.g.
+ *   local x = game:GetService("HttpService")
+ * The unescaped inner `"` terminates the JS string early, so `eval` throws a
+ * SyntaxError and the whole dump fails to load.
+ *
+ * Re-escape: walk the statement and treat a `"` as a string *terminator* only
+ * when the next non-space char is structural (`,` `]` `}` `;` newline / EOF);
+ * otherwise it is label content and gets escaped to `\"`. Backslashes are doubled
+ * so the labels survive intact. Run only as a fallback on a failed eval, so
+ * well-formed statements are untouched.
+ */
+function escapeUnescapedLabelQuotes(js: string): string {
+  let out = "";
+  let inStr = false;
+  for (let i = 0; i < js.length; i++) {
+    const c = js[i];
+    if (!inStr) {
+      out += c;
+      if (c === '"') inStr = true;
+    } else if (c === "\\") {
+      out += "\\\\";
+    } else if (c === '"') {
+      let j = i + 1;
+      while (j < js.length && (js[j] === " " || js[j] === "\t")) j++;
+      const next = j < js.length ? js[j] : "";
+      const terminator =
+        next === "" || next === "," || next === "]" || next === "}" || next === ";" || next === "\n" || next === "\r";
+      if (terminator) {
+        out += '"';
+        inStr = false;
+      } else {
+        out += '\\"';
+      }
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
 // ── Public API ──
 
 const DEFAULT_MEMORY_CONFIG: WasmMemoryConfig = {
@@ -164,6 +209,25 @@ export async function initWasm(rawData: Uint8Array, memoryConfig: WasmMemoryConf
   viewerJs = patchViewerJs(viewerJs, memoryConfig);
 
   globalThis.eval(viewerJs);
+
+  // The WASM exporter eval's JS array literals of profiler labels without
+  // escaping inner double-quotes (see escapeUnescapedLabelQuotes). Make the
+  // eval callback tolerant: retry once with inner quotes escaped on SyntaxError.
+  {
+    const _origExec = globalThis.ExecStatement;
+    if (typeof _origExec === "function") {
+      globalThis.ExecStatement = function (js: string) {
+        try {
+          return _origExec(js);
+        } catch (e: any) {
+          if (e instanceof SyntaxError || e?.name === "SyntaxError") {
+            return _origExec(escapeUnescapedLabelQuotes(js));
+          }
+          throw e;
+        }
+      };
+    }
+  }
 
   globalThis.document.getElementById = domStub;
   globalThis.document.createElement = domStub;
