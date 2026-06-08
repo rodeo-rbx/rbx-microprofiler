@@ -102,7 +102,7 @@ function aggregateSummaries(summaries: any[]): any {
 const program = new Command()
   .name("rbx-microprofiler")
   .description("Roblox MicroProfiler CLI — flamegraphs, diffs, summaries, and format conversion")
-  .version("0.2.0");
+  .version("0.3.0");
 
 // ── summary ──
 
