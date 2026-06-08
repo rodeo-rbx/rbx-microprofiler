@@ -82,6 +82,14 @@ export function getViewerJs(): string {
     js = js.slice(0, scriptEnd);
   }
 
+  // Normalize line endings to LF. On Windows, git's autocrlf checks
+  // template.html out with CRLF, and the engine's LF-based string surgery on
+  // the viewer JS (the auto-init `CliInitMinimal()` strip and the `^var S =
+  // {};$` regex patches) then silently no-ops — so CliInitMinimal() runs at
+  // eval time and throws "InitDataImpl is not defined". JS evals identically
+  // with either line ending, so normalizing here is safe.
+  js = js.replace(/\r\n/g, "\n");
+
   _cachedViewerJs = js;
   return _cachedViewerJs;
 }
