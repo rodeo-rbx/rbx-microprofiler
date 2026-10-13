@@ -8,7 +8,7 @@ CLI for Roblox MicroProfiler dump analysis. Read legacy `.raw` and `.html` dumps
 
 ```toml
 [tools]
-"ubi:revvy02/rbx-microprofiler" = "0.1.0"
+"ubi:revvy02/rbx-microprofiler" = "0.4.0"
 ```
 
 ### Rokit
