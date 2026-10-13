@@ -1,16 +1,14 @@
 /**
  * MicroProfiler — typed API for Roblox MicroProfiler dump analysis.
  *
- * Wraps the WASM engine and viewer JS globals with a clean interface.
+ * Wraps the legacy WASM engine, LibMP, and their viewer globals with a clean interface.
  */
 
-import { readDump } from "../format.js";
+import { dumpFormat, readDump } from "../format.js";
 import { initWasm, reloadWasm, silent, isInitialized } from "./engine.js";
+import { getLibMP, type LibMPHost } from "./libmp.js";
 import type { WasmMemoryConfig } from "./patch.js";
 import { readFileSync } from "node:fs";
-import { basename } from "node:path";
-
-const G = globalThis as Record<string, any>;
 
 // ── Types ──
 
@@ -88,63 +86,70 @@ export interface RawEvent {
 // ── MicroProfiler class ──
 
 export interface MicroProfilerOptions {
-  /** Target max WASM memory in bytes. Must be a multiple of 64KB. Default: 4GB. */
+  /** Target max WASM memory in bytes for legacy dumps. Must be a multiple of 64KB. Default: 4GB. */
   maxMemoryBytes?: number;
 }
 
+/**
+ * One loaded dump at a time, from either engine: legacy R0FL dumps (`.raw`,
+ * legacy `.html`) load into the legacy engine on the process globals, `.gprx`
+ * and `.x.html` captures into LibMP's viewer. Both expose the same viewer
+ * globals and exports. The legacy engine is process-wide, so use one
+ * MicroProfiler at a time.
+ */
 export class MicroProfiler {
-  private constructor() {}
+  private G: Record<string, any> = globalThis;
+  /** LibMP's host while a LibMP capture is loaded. */
+  private libmp: LibMPHost | null = null;
 
-  /** Load a dump from a file path (.raw or .html). */
-  static async load(path: string, opts?: MicroProfilerOptions): Promise<MicroProfiler> {
-    const rawData = readDump(path);
-    return MicroProfiler.fromBytes(rawData, opts);
+  private constructor(private readonly opts?: MicroProfilerOptions) {}
+
+  /** Load a dump from a file path (.raw, .html, .gprx or .x.html); `segment` picks a LibMP capture's segment. */
+  static async load(path: string, opts?: MicroProfilerOptions, segment?: number): Promise<MicroProfiler> {
+    const mp = new MicroProfiler(opts);
+    await mp.reload(path, segment);
+    return mp;
   }
 
-  /** Load a dump from raw bytes (with R0FL header). */
+  /** Load a legacy dump from raw bytes (with R0FL header). */
   static async fromBytes(data: Uint8Array, opts?: MicroProfilerOptions): Promise<MicroProfiler> {
-    if (isInitialized()) {
-      throw new Error("MicroProfiler already initialized. Only one instance per process.");
-    }
-    const memoryConfig: WasmMemoryConfig | undefined = opts?.maxMemoryBytes
-      ? { maxMemoryBytes: opts.maxMemoryBytes }
-      : undefined;
-    await initWasm(data, memoryConfig);
-    return new MicroProfiler();
+    const mp = new MicroProfiler(opts);
+    await mp.reloadBytes(data);
+    return mp;
   }
 
   // ── Data access ──
 
   get frames(): Frame[] {
-    return G.Frames;
+    return this.G.Frames;
   }
 
   get timers(): TimerInfo[] {
-    return G.TimerInfo;
+    return this.G.TimerInfo;
   }
 
   get groups(): GroupInfo[] {
-    return G.GroupInfo;
+    return this.G.GroupInfo;
   }
 
   get counters(): CounterInfo[] {
-    return G.CounterInfo;
+    return this.G.CounterInfo;
   }
 
   get aggregateInfo(): AggregateInfo {
-    return G.AggregateInfo;
+    return this.G.AggregateInfo;
   }
 
   get platformInfo(): string {
-    return G.PlatformInfo;
+    return this.G.PlatformInfo;
   }
 
   get generalInfo(): any {
-    return G.GeneralInfo;
+    return this.G.GeneralInfo;
   }
 
   get threads(): ThreadMeta[] {
-    const names = G.ThreadNames as string[];
+    const names = this.G.ThreadNames as string[];
     const result: ThreadMeta[] = [];
     for (let i = 0; i < names.length; i++) {
       if (names[i] && names[i].trim()) {
@@ -159,7 +164,7 @@ export class MicroProfiler {
   }
 
   get tickToTimeScale(): number {
-    return G.g_TickToTimeScale;
+    return this.G.g_TickToTimeScale;
   }
 
   // ── Per-frame helpers ──
@@ -175,13 +180,27 @@ export class MicroProfiler {
 
   // ── Reload ──
 
-  async reload(path: string): Promise<void> {
-    const rawData = readDump(path);
-    await this.reloadBytes(rawData);
+  async reload(path: string, segment?: number): Promise<void> {
+    if (dumpFormat(path) === "legacy") {
+      await this.reloadBytes(readDump(path));
+      return;
+    }
+    this.libmp = await getLibMP();
+    this.G = await this.libmp.loadViewer(new Uint8Array(readFileSync(path)), segment);
   }
 
+  /** Load a legacy dump from raw bytes (with R0FL header). */
   async reloadBytes(data: Uint8Array): Promise<void> {
-    await reloadWasm(data);
+    if (isInitialized()) {
+      await reloadWasm(data);
+    } else {
+      const memoryConfig: WasmMemoryConfig | undefined = this.opts?.maxMemoryBytes
+        ? { maxMemoryBytes: this.opts.maxMemoryBytes }
+        : undefined;
+      await initWasm(data, memoryConfig);
+    }
+    this.G = globalThis;
+    this.libmp = null;
   }
 
   // ── Export functions ──
@@ -199,56 +218,17 @@ export class MicroProfiler {
   }
 
   private _captureExport(fnName: string): string | null {
+    if (this.libmp) return this.libmp.export(fnName);
     let captured: string | null = null;
-    const origSave = G.SaveExportResult;
-    G.SaveExportResult = (str: string) => { captured = str; };
+    const origSave = this.G.SaveExportResult;
+    this.G.SaveExportResult = (str: string) => { captured = str; };
     try {
-      const fn = G[fnName];
+      const fn = this.G[fnName];
       if (typeof fn === "function") fn();
     } finally {
-      G.SaveExportResult = origSave;
+      this.G.SaveExportResult = origSave;
     }
     return captured;
-  }
-
-  // ── DiffSides API ──
-
-  initDiffSides(): void {
-    G.InitDiffSides();
-  }
-
-  addToDiffSide(sideId: number, path: string): void {
-    const bytes = readFileSync(path);
-    const file = new File([bytes], basename(path));
-    G.AddToDiffSide(sideId, file);
-  }
-
-  addBytesToDiffSide(sideId: number, bytes: Uint8Array, fileName: string): void {
-    const file = new File([bytes], fileName);
-    G.AddToDiffSide(sideId, file);
-  }
-
-  async exportDiffSides(sideId: number): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const origCliMode = G.ExportCliMode;
-      G.ExportCliMode = () => {
-        const result = G.g_Loader.toolsData.exportResult;
-        G.g_Loader.toolsData.exportResult = null;
-        G.ExportCliMode = origCliMode;
-        if (result) resolve(result);
-        else reject(new Error("No export result"));
-      };
-
-      const origLog = console.log;
-      console.log = () => {};
-
-      G.ExportDiffSides(sideId)
-        .finally(() => { console.log = origLog; })
-        .catch((e: Error) => {
-          G.ExportCliMode = origCliMode;
-          reject(e);
-        });
-    });
   }
 
   // ── Event extraction ──

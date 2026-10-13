@@ -1,6 +1,6 @@
 # rbx-microprofiler
 
-CLI for Roblox MicroProfiler dump analysis. Parse `.raw` and `.html` dumps, generate flamegraphs, and compare performance across builds.
+CLI for Roblox MicroProfiler dump analysis. Read legacy `.raw` and `.html` dumps and LibMP `.gprx` and `.x.html` captures, generate flamegraphs, and compare performance across builds.
 
 ## Install
 
@@ -21,7 +21,7 @@ rokit add revvy02/rbx-microprofiler
 
 ### convert
 
-Convert between the two MicroProfiler dump formats: `.raw` (binary) and `.html` (self-contained viewer).
+Convert a dump between the formats of its family: legacy `.raw` and `.html`, or LibMP `.gprx` and `.x.html`. Legacy dumps and LibMP captures don't convert into each other.
 
 ```sh
 # raw -> html (adds the interactive viewer)
@@ -29,6 +29,12 @@ rbx-microprofiler convert dump.raw dump.html
 
 # html -> raw (extracts the binary data)
 rbx-microprofiler convert dump.html dump.raw
+
+# gprx -> x.html (opens in Roblox's LibMP viewer)
+rbx-microprofiler convert capture.gprx capture.x.html
+
+# x.html -> gprx (compressed)
+rbx-microprofiler convert capture.x.html capture.gprx
 ```
 
 ### summary
@@ -50,7 +56,7 @@ rbx-microprofiler summary dumps/
 
 ### flamegraph
 
-Generate an interactive flamegraph HTML from one or more dumps.
+Generate an interactive flamegraph HTML from one or more dumps, in any mix of formats. Several dumps merge into one flamegraph of per-frame averages, read one dump at a time, so memory and the page's size don't grow with the number of dumps.
 
 ```sh
 # Single dump
@@ -64,7 +70,7 @@ rbx-microprofiler flamegraph dumps/ -o flamegraph.html
 
 ### diff-flamegraph
 
-Generate a differential flamegraph comparing baseline vs candidate dumps. Red = regression, blue = improvement.
+Generate a differential flamegraph comparing baseline vs candidate dumps. Each node takes the color of the side that spends more time in it: green for the baseline, blue for the candidate.
 
 ```sh
 rbx-microprofiler diff-flamegraph \
@@ -79,12 +85,16 @@ rbx-microprofiler diff-flamegraph \
 
 | Format | Extension | Description |
 |--------|-----------|-------------|
-| Raw | `.raw` | Binary R0FL format (4 zero bytes + `R0FL` magic + payload) |
-| HTML | `.html` | Self-contained viewer with embedded compressed data |
+| Raw | `.raw` | Legacy binary R0FL format (4 zero bytes + `R0FL` magic + payload) |
+| HTML | `.html` | Legacy self-contained viewer with embedded compressed data |
+| GPRX | `.gprx` | LibMP capture (MicroProfiler **Dump** ➔ **Dump in binary format**) |
+| LibMP HTML | `.x.html` | LibMP capture embedded in a page that loads Roblox's LibMP viewer |
+
+Studio's auto-captures (`AutoCapture_*.raw`) are legacy dumps.
 
 ### diff
 
-Compare baseline vs candidate with per-node statistics in a tree view.
+Compare baseline vs candidate with per-node statistics in a tree view. Each node's values are its per-frame averages across each side's dumps, as the diff flamegraph shows them.
 
 ```sh
 rbx-microprofiler diff \

@@ -11,7 +11,7 @@
  * The comment has: {u32le_uncompressed_size}{u32le_compressed_size}{zlib_data}
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { deflateSync, inflateSync } from "node:zlib";
 import { extractRawFromHtml, getToolsLine, getViewerJs } from "./template.js";
 
@@ -67,6 +67,25 @@ function findR0FL(data: Uint8Array): number {
   return -1;
 }
 
+/**
+ * A dump's format, from its first bytes: "legacy" for R0FL (`.raw` and the
+ * legacy `.html`), "libmp" for anything else, which LibMP opens (`.gprx`,
+ * `.x.html`) or rejects.
+ */
+export type DumpFormat = "legacy" | "libmp";
+
+export function dumpFormat(path: string): DumpFormat {
+  const head = new Uint8Array(8);
+  const fd = openSync(path, "r");
+  try {
+    readSync(fd, head, 0, head.length, 0);
+  } finally {
+    closeSync(fd);
+  }
+  const text = String.fromCharCode(...head);
+  return text === "\0\0\0\0R0FL" || text === "<!--R0FL" ? "legacy" : "libmp";
+}
+
 /** Read a dump file (.raw or .html) and return full R0FL bytes. */
 export function readDump(path: string): Uint8Array {
   if (path.endsWith(".html")) {
@@ -109,10 +128,4 @@ export function writeHtml(rawData: Uint8Array, outputPath: string): void {
 
   const output = `${dataComment}\n${toolsLine}\n${viewerHtml}`;
   writeFileSync(outputPath, output);
-}
-
-/** Extract raw bytes from .html and write as .raw file. */
-export function writeRaw(htmlPath: string, outputPath: string): void {
-  const rawData = readHtml(htmlPath);
-  writeFileSync(outputPath, rawData);
 }

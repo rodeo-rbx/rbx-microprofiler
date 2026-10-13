@@ -4,9 +4,13 @@
  */
 
 import { Command } from "commander";
-import { readDump } from "./format.js";
+import { dumpFormat, readDump, writeHtml } from "./format.js";
 import { MicroProfiler } from "./lib/index.js";
-import { writeFileSync, statSync, readdirSync } from "node:fs";
+import { dumpContainers, listDumps } from "./lib/dumps.js";
+import { ContainerMerge } from "./lib/merge.js";
+import { renderFlamegraphPage } from "./lib/page.js";
+import { getLibMP } from "./lib/libmp.js";
+import { writeFileSync, statSync, readdirSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { basename, join } from "node:path";
 
@@ -25,7 +29,7 @@ function openFile(path: string): void {
 
 function collectFiles(paths: string[]): string[] {
   const files: string[] = [];
-  const supported = new Set([".raw", ".html"]);
+  const supported = new Set([".raw", ".html", ".gprx"]);
   for (const p of paths) {
     if (statSync(p).isDirectory()) {
       for (const f of readdirSync(p).sort()) {
@@ -37,6 +41,32 @@ function collectFiles(paths: string[]): string[] {
     }
   }
   return files;
+}
+
+/** Read each dump's flame graph containers into a merge, one dump at a time. */
+async function mergeDumps(merge: ContainerMerge, files: string[], side: 0 | 1, label: string): Promise<void> {
+  for await (const containers of dumpContainers(files)) {
+    merge.add(containers, side);
+    console.error(`  ${label}: ${containers[0].dumpInfo.fileName}`);
+  }
+}
+
+/** Convert one dump to another file format within its family. */
+async function convertDump(input: string, output: string): Promise<void> {
+  const out = output.toLowerCase();
+  if (dumpFormat(input) === "legacy") {
+    if (out.endsWith(".x.html") || out.endsWith(".gprx")) {
+      throw new Error(`${input} is a legacy dump: it converts to .raw or .html`);
+    }
+    if (out.endsWith(".html")) writeHtml(readDump(input), output);
+    else if (out.endsWith(".raw")) writeFileSync(output, readDump(input));
+    else throw new Error(`Unsupported output format: ${output}`);
+    return;
+  }
+  const format = out.endsWith(".html") ? "compressed-html" : out.endsWith(".gprx") ? "compressed" : null;
+  if (!format) throw new Error(`${input} is a LibMP capture: it converts to .gprx or .x.html`);
+  const libmp = await getLibMP();
+  writeFileSync(output, libmp.convert(new Uint8Array(readFileSync(input)), basename(input), format));
 }
 
 /** Aggregate multiple ExportSummaryJSON results into one. */
@@ -109,22 +139,23 @@ const program = new Command()
 program
   .command("summary")
   .description("Print a JSON summary of microprofiler dump(s)")
-  .argument("<files...>", "Input .raw or .html files or directories")
+  .argument("<files...>", "Input dump files (.raw, .html, .gprx, .x.html) or directories")
   .action(async (files: string[]) => {
     const allFiles = collectFiles(files);
     if (allFiles.length === 0) {
-      console.error("No .raw or .html files found");
+      console.error("No dump files found");
       process.exit(1);
     }
 
-    const mp = await MicroProfiler.load(allFiles[0]);
+    const dumps = await listDumps(allFiles);
+    const mp = await MicroProfiler.load(dumps[0].path, undefined, dumps[0].segment);
     const summaries: any[] = [];
 
     const json = mp.exportSummaryJSON();
     if (json) summaries.push(JSON.parse(json));
 
-    for (let i = 1; i < allFiles.length; i++) {
-      await mp.reload(allFiles[i]);
+    for (let i = 1; i < dumps.length; i++) {
+      await mp.reload(dumps[i].path, dumps[i].segment);
       const j = mp.exportSummaryJSON();
       if (j) summaries.push(JSON.parse(j));
     }
@@ -143,14 +174,14 @@ program
 program
   .command("csv")
   .description("Export frame markers or performance counters as CSV")
-  .argument("<files...>", "Input .raw or .html files or directories")
+  .argument("<files...>", "Input dump files (.raw, .html, .gprx, .x.html) or directories")
   .requiredOption("-o, --output <path>", "Output CSV file")
   .option("--counters", "Export counters instead of markers")
   .option("--open", "Open output in default app")
   .action(async (files: string[], opts: { output: string; counters?: boolean; open?: boolean }) => {
     const allFiles = collectFiles(files);
     if (allFiles.length === 0) {
-      console.error("No .raw or .html files found");
+      console.error("No dump files found");
       process.exit(1);
     }
 
@@ -172,27 +203,22 @@ program
 program
   .command("flamegraph")
   .description("Generate an interactive flamegraph from one or more dumps")
-  .argument("<files...>", "Input .raw or .html files or directories")
+  .argument("<files...>", "Input dump files (.raw, .html, .gprx, .x.html) or directories")
   .requiredOption("-o, --output <path>", "Output HTML file")
   .option("--open", "Open output in default app")
   .action(async (files: string[], opts: { output: string; open?: boolean }) => {
     const allFiles = collectFiles(files);
     if (allFiles.length === 0) {
-      console.error("No .raw or .html files found");
+      console.error("No dump files found");
       process.exit(1);
     }
 
-    console.error(`Loading ${allFiles.length} dump(s)...`);
-    const mp = await MicroProfiler.load(allFiles[0]);
-
-    mp.initDiffSides();
-    for (const f of allFiles.slice(1)) {
-      mp.addToDiffSide(0, f);
-      console.error(`  added: ${basename(f)}`);
-    }
+    console.error(`Reading ${allFiles.length} dump file(s)...`);
+    const merge = new ContainerMerge();
+    await mergeDumps(merge, allFiles, 0, "read");
 
     console.error("Exporting flamegraph...");
-    const result = await mp.exportDiffSides(0);
+    const result = await renderFlamegraphPage(merge);
 
     writeFileSync(opts.output, result);
     console.error(`Flamegraph → ${opts.output} (${(result.length / 1024).toFixed(0)} KB)`);
@@ -221,21 +247,12 @@ program
       process.exit(1);
     }
 
-    console.error(`Loading viewer with ${basename(baselineFiles[0])}...`);
-    const mp = await MicroProfiler.load(baselineFiles[0]);
-
-    mp.initDiffSides();
-    for (const f of baselineFiles.slice(1)) {
-      mp.addToDiffSide(0, f);
-      console.error(`  baseline: ${basename(f)}`);
-    }
-    for (const f of candidateFiles) {
-      mp.addToDiffSide(1, f);
-      console.error(`  candidate: ${basename(f)}`);
-    }
+    const merge = new ContainerMerge();
+    await mergeDumps(merge, baselineFiles, 0, "baseline");
+    await mergeDumps(merge, candidateFiles, 1, "candidate");
 
     console.error("Exporting diff...");
-    const result = await mp.exportDiffSides(-1);
+    const result = await renderFlamegraphPage(merge);
 
     writeFileSync(opts.output, result);
     console.error(`Diff → ${opts.output} (${(result.length / 1024).toFixed(0)} KB)`);
@@ -271,31 +288,13 @@ program
       process.exit(1);
     }
 
-    console.error(`Loading viewer with ${basename(baselineFiles[0])}...`);
-    const mp = await MicroProfiler.load(baselineFiles[0]);
-
-    mp.initDiffSides();
-    for (const f of baselineFiles.slice(1)) {
-      mp.addToDiffSide(0, f);
-      console.error(`  baseline: ${basename(f)}`);
-    }
-    for (const f of candidateFiles) {
-      mp.addToDiffSide(1, f);
-      console.error(`  candidate: ${basename(f)}`);
-    }
+    const merge = new ContainerMerge();
+    await mergeDumps(merge, baselineFiles, 0, "baseline");
+    await mergeDumps(merge, candidateFiles, 1, "candidate");
 
     console.error("Computing diff...");
-    const html = await mp.exportDiffSides(-1);
-
     const { renderDiff } = await import("./diff.js");
-    renderDiff(
-      html,
-      baselineFiles.length,
-      candidateFiles.length,
-      parseFloat(opts.minMs),
-      parseInt(opts.depth),
-      opts.output,
-    );
+    renderDiff(merge, parseFloat(opts.minMs), parseInt(opts.depth), opts.output);
   });
 
 // ── convert ──
@@ -313,31 +312,23 @@ program
     const outputFile = args[args.length - 1];
     const inputFiles = args.slice(0, -1);
 
-    const { writeHtml, writeRaw } = await import("./format.js");
-
-    const outExt = outputFile.endsWith(".perfetto-trace")
-      ? ".perfetto-trace"
-      : outputFile.slice(outputFile.lastIndexOf("."));
-
-    if (outExt === ".html") {
-      const rawData = readDump(inputFiles[0]);
-      writeHtml(rawData, outputFile);
-      console.error(`Converted → ${outputFile}`);
-    } else if (outExt === ".raw") {
-      writeRaw(inputFiles[0], outputFile);
-      console.error(`Converted → ${outputFile}`);
-    } else if (outExt === ".json") {
+    if (outputFile.endsWith(".json")) {
       const { extractTraceJson } = await import("./convert.js");
-      const allInputs = collectFiles(inputFiles);
-      await extractTraceJson(allInputs, outputFile);
-    } else if (outExt === ".perfetto-trace") {
+      const dumps = await listDumps(collectFiles(inputFiles));
+      await extractTraceJson(dumps, outputFile);
+    } else if (outputFile.endsWith(".perfetto-trace")) {
       const { extractPerfetto } = await import("./convert.js");
-      const allInputs = collectFiles(inputFiles);
-      console.error(`Converting ${allInputs.length} dump(s) to Perfetto trace...`);
-      await extractPerfetto(allInputs, outputFile);
+      const dumps = await listDumps(collectFiles(inputFiles));
+      console.error(`Converting ${dumps.length} dump(s) to Perfetto trace...`);
+      await extractPerfetto(dumps, outputFile);
     } else {
-      console.error(`Unsupported output format: ${outExt}`);
-      process.exit(1);
+      try {
+        await convertDump(inputFiles[0], outputFile);
+      } catch (e: any) {
+        console.error(e.message);
+        process.exit(1);
+      }
+      console.error(`Converted → ${outputFile}`);
     }
   });
 

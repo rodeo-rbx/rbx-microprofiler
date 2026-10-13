@@ -165,10 +165,11 @@ const DEFAULT_MEMORY_CONFIG: WasmMemoryConfig = {
   maxMemoryBytes: 4 * 1024 * 1024 * 1024, // 4GB
 };
 
-export async function initWasm(rawData: Uint8Array, memoryConfig: WasmMemoryConfig = DEFAULT_MEMORY_CONFIG): Promise<void> {
-  if (_initialized) {
-    throw new Error("Engine already initialized.");
-  }
+let _loaded = false;
+
+/** Evaluate the tools and viewer JS onto the process globals, once. */
+function loadEngine(memoryConfig: WasmMemoryConfig): void {
+  if (_loaded) return;
 
   globalThis.g_cliMode = true;
   globalThis.g_cliSkipInitLevel = 999;
@@ -232,6 +233,15 @@ export async function initWasm(rawData: Uint8Array, memoryConfig: WasmMemoryConf
   globalThis.document.getElementById = domStub;
   globalThis.document.createElement = domStub;
   globalThis.ExtractRawData = async () => {};
+  globalThis.g_Loader.toolsData = {};
+  _loaded = true;
+}
+
+export async function initWasm(rawData: Uint8Array, memoryConfig: WasmMemoryConfig = DEFAULT_MEMORY_CONFIG): Promise<void> {
+  if (_initialized) {
+    throw new Error("Engine already initialized.");
+  }
+  loadEngine(memoryConfig);
 
   // Parse the initial dump
   globalThis.g_Loader.toolsData = {};
@@ -278,4 +288,49 @@ export async function reloadWasm(rawData: Uint8Array): Promise<void> {
 
 export function isInitialized(): boolean {
   return _initialized;
+}
+
+export interface ComboInput {
+  /** Dump bytes, starting with the R0FL header. */
+  data: Uint8Array;
+  fileName: string;
+}
+
+/**
+ * Run the engine's combo flame graph export (what the viewer's ExportDiffSides
+ * runs) over these dumps and return its page, which holds each dump's
+ * containers. Each call gets a fresh WASM instance, so memory is bounded by
+ * the dumps passed in, not by earlier calls.
+ */
+export async function exportComboPage(dumps: ComboInput[]): Promise<string> {
+  loadEngine(DEFAULT_MEMORY_CONFIG);
+  const Module: any = await silentAsync(() => globalThis.ToolsModule());
+  globalThis.Tools = Module;
+  try {
+    silent(() => Module.ccall("Init", "number", []));
+    const options: any[] = JSON.parse(globalThis.g_Loader.toolsData.exportResult);
+    globalThis.g_Loader.toolsData.exportResult = null;
+    const combo = options.find((entry) => entry.comboDiff);
+    if (!combo) throw new Error("The legacy engine has no combo export");
+
+    const exporter = Module.cwrap(combo.funcName, "number", ["string", "number", "number"]);
+    const call = (meta: string, data: Uint8Array) => {
+      const ptr = Module._malloc(data.length) >>> 0;
+      Module.HEAPU8.set(data, ptr);
+      silent(() => exporter(meta, ptr, data.length));
+      Module._free(ptr);
+    };
+    dumps.forEach((dump, localId) => {
+      call(JSON.stringify({ fileName: dump.fileName, localId, localGroupId: 0 }), dump.data);
+    });
+    // Multi-dump exporters write their page on a final call without a dump.
+    if (combo.multiRaw) call("", new Uint8Array(1));
+
+    const page = globalThis.g_Loader.toolsData.exportResult;
+    globalThis.g_Loader.toolsData.exportResult = null;
+    if (!page) throw new Error("The legacy engine's combo export returned nothing");
+    return page;
+  } finally {
+    globalThis.Tools = null;
+  }
 }

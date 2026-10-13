@@ -7,11 +7,12 @@ import { writeFileSync } from "node:fs";
 import protobuf from "protobufjs";
 import perfettoJson from "./perfetto.json";
 import { MicroProfiler, type RawEvent } from "./lib/index.js";
+import type { DumpRef } from "./lib/dumps.js";
 
 // ── Chrome Trace JSON export ──
 
-export async function extractTraceJson(files: string[], outputPath: string): Promise<void> {
-  const mp = await MicroProfiler.load(files[0]);
+export async function extractTraceJson(files: DumpRef[], outputPath: string): Promise<void> {
+  const mp = await MicroProfiler.load(files[0].path, undefined, files[0].segment);
   const parts: string[] = [];
 
   // Thread metadata
@@ -25,7 +26,7 @@ export async function extractTraceJson(files: string[], outputPath: string): Pro
   let totalFrames = 0;
 
   for (let fi = 0; fi < files.length; fi++) {
-    if (fi > 0) await mp.reload(files[fi]);
+    if (fi > 0) await mp.reload(files[fi].path, files[fi].segment);
 
     const offsetMs = mp.absoluteOffsetMs();
     const frameCount = mp.frameCount;
@@ -63,7 +64,7 @@ export async function extractTraceJson(files: string[], outputPath: string): Pro
 
 const _protoRoot = protobuf.Root.fromJSON(perfettoJson as protobuf.INamespace);
 
-export async function extractPerfetto(files: string[], outputPath: string): Promise<void> {
+export async function extractPerfetto(files: DumpRef[], outputPath: string): Promise<void> {
   const TracePacket = _protoRoot.lookupType("perfetto.protos.TracePacket");
 
   const PROCESS_UUID = 1;
@@ -110,10 +111,10 @@ export async function extractPerfetto(files: string[], outputPath: string): Prom
     return uuid;
   }
 
-  const mp = await MicroProfiler.load(files[0]);
+  const mp = await MicroProfiler.load(files[0].path, undefined, files[0].segment);
 
   for (let fi = 0; fi < files.length; fi++) {
-    if (fi > 0) await mp.reload(files[fi]);
+    if (fi > 0) await mp.reload(files[fi].path, files[fi].segment);
 
     const offsetMs = mp.absoluteOffsetMs();
     const frameCount = mp.frameCount;

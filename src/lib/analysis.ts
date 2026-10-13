@@ -1,15 +1,15 @@
 /**
- * Analysis pipeline — extract per-dump per-node samples from the WASM's
- * canonical diff flamegraph data, compute statistics, compare baseline
- * vs candidates, produce Analysis JSON.
+ * Analysis pipeline — extract per-dump per-node samples from each dump's
+ * flame graph containers, compute statistics, compare baseline vs
+ * candidates, produce Analysis JSON.
  *
- * Uses the WASM's ExportDiffSides to get canonical per-node CPU times
- * (with proper cross-thread causal attribution). Each dump contributes
- * one sample per node (per-frame average = displayValue / numberOfFrames).
+ * Each dump's CPU time tree comes from the engine that reads its format (the
+ * legacy engine's or LibMP's flame graph export, with their cross-thread
+ * attribution), one dump at a time. Each dump contributes one sample per node
+ * (per-frame average = displayValue / numberOfFrames).
  */
 
-import { MicroProfiler } from "./index.js";
-import { parseDiffContainers } from "../diff.js";
+import { dumpContainers } from "./dumps.js";
 import {
   sampleStats,
   welchTTest,
@@ -52,7 +52,7 @@ function createSampleNode(): SampleNode {
   return { samples: [], children: new Map() };
 }
 
-// ── Extract per-dump samples from WASM combo HTML ──
+// ── Extract per-dump samples ──
 
 interface TopDownNode {
   name: string;
@@ -81,36 +81,17 @@ function collectSamples(
   }
 }
 
-/**
- * Generate a single-side combo flamegraph HTML from dump files via the WASM,
- * then parse the per-dump topDown trees.
- */
-async function extractWasmSamples(
-  mp: MicroProfiler,
-  files: string[],
-): Promise<SampleNode> {
-  // Load all files into DiffSides side 0
-  mp.initDiffSides();
-  for (let i = 1; i < files.length; i++) {
-    mp.addToDiffSide(0, files[i]);
-  }
-
-  // Export single-side combo → HTML
-  const html = await mp.exportDiffSides(0);
-
-  // Parse CPU time containers
-  const containers = parseDiffContainers(html);
-  if (containers.length === 0) {
-    throw new Error("No CPU time data found in combo HTML");
-  }
-
-  // Build sample tree — one sample per dump per node
+/** Each dump's CPU time tree as samples, read one dump at a time. */
+async function extractSamples(files: string[]): Promise<SampleNode> {
   const root = createSampleNode();
-  for (const c of containers) {
-    const nFrames = c.dumpInfo.numberOfFrames;
-    collectSamples(root, c.topDown, nFrames);
+  let dumps = 0;
+  for await (const containers of dumpContainers(files)) {
+    const cpu = containers.find((c) => c.title === "CPU time");
+    if (!cpu) continue;
+    collectSamples(root, cpu.topDown, cpu.dumpInfo.numberOfFrames);
+    dumps++;
   }
-
+  if (dumps === 0) throw new Error("No CPU time data found in the dumps");
   return root;
 }
 
@@ -233,10 +214,7 @@ export interface AnalyzeOptions {
   maxDepth?: number;
 }
 
-/**
- * Build Analysis JSON from baseline and candidate dump files.
- * Uses the WASM's canonical diff flamegraph data for per-node values.
- */
+/** Build Analysis JSON from baseline and candidate dump files. */
 export async function buildAnalysis(
   baselineFiles: string[],
   candidates: Map<string, string[]>,
@@ -245,21 +223,14 @@ export async function buildAnalysis(
   const noiseThreshold = options.noiseThreshold ?? 0.01;
   const maxDepth = options.maxDepth ?? 999;
 
-  // Load engine with first baseline file
-  const mp = await MicroProfiler.load(baselineFiles[0]);
-
-  // Extract baseline samples via WASM combo
   console.error(`Processing baseline (${baselineFiles.length} dumps)...`);
-  const baselineSamples = await extractWasmSamples(mp, baselineFiles);
+  const baselineSamples = await extractSamples(baselineFiles);
 
   // Extract each candidate's samples
   const candidateSamples = new Map<string, SampleNode>();
   for (const [name, files] of candidates) {
     console.error(`Processing candidate: ${name} (${files.length} dumps)...`);
-    // Reload engine with first candidate file, then extract via WASM combo
-    await mp.reload(files[0]);
-    const samples = await extractWasmSamples(mp, files);
-    candidateSamples.set(name, samples);
+    candidateSamples.set(name, await extractSamples(files));
   }
 
   console.error("Building analysis...");
